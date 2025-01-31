@@ -140,6 +140,34 @@
             (var-set total-funds-raised (+ (var-get total-funds-raised) amount))
             (ok true))))
 
+;; Claim campaign funds (for creator)
+(define-public (claim-funds (campaign-id uint))
+    (let ((campaign (unwrap! (map-get? campaigns campaign-id) err-campaign-not-found)))
+        (begin
+            (asserts! (is-eq tx-sender (get creator campaign)) err-not-creator)
+            (asserts! (>= block-height (get deadline campaign)) err-campaign-active)
+            (asserts! (>= (get funds-raised campaign) (get goal campaign)) err-goal-not-reached)
+            (asserts! (not (get claimed campaign)) err-already-claimed)
+            
+            ;; Calculate platform fee
+            (let ((fee (/ (* (get funds-raised campaign) (var-get platform-fee)) u1000))
+                  (final-amount (- (get funds-raised campaign) fee)))
+                
+                ;; Transfer funds to creator
+                (try! (as-contract (stx-transfer? final-amount tx-sender (get creator campaign))))
+                ;; Transfer fee to contract owner
+                (try! (as-contract (stx-transfer? fee tx-sender contract-owner)))
+                
+                ;; Update campaign status
+                (map-set campaigns campaign-id
+                    (merge campaign 
+                        { 
+                            claimed: true,
+                            status: (var-get status-funded)
+                        }))
+                
+                (ok final-amount)))))
+
 ;; Request refund (for failed campaigns)
 (define-public (request-refund (campaign-id uint))
     (let ((campaign (unwrap! (map-get? campaigns campaign-id) err-campaign-not-found))
